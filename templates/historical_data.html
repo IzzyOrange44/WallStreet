@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Historical Data</title>
+    <style>
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+        }
+        .table-container, .chart-container {
+            width: 48%;
+        }
+        table.data {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        table.data th, table.data td {
+            border: 1px solid #ddd;
+            padding: 8px;
+        }
+        table.data th {
+            background-color: #f4f4f4;
+            text-align: left;
+        }
+        h1 {
+            text-align: center;
+        }
+        img {
+            width: 100%;
+            max-height: 500px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Historical Data</h1>
+    <div class="container">
+        <div class="table-container">
+            {% if tables %}
+                <div>{{ tables|safe }}</div>
+            {% else %}
+                <p>No data available</p>
+            {% endif %}
+        </div>
+        <div class="chart-container">
+            {% if chart_url %}
+                <img src="{{ url_for('static', filename='bollinger_chart.png') }}" alt="Bollinger Chart">
+            {% else %}
+                <p>No chart available</p>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>
+
