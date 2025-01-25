@@ -127,4 +127,4 @@ def display_data():
     return render_template('historical_data.html', tables=df_html, chart_url=chart_path)
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=False)
