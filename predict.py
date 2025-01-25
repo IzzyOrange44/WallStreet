@@ -179,9 +179,16 @@ def logout():
 @app.route("/clear", methods=["POST"])
 @login_required
 def clear():
-    with db.engine.connect() as connection:
-        connection.execute(text("DROP TABLE IF EXISTS historical_data"))
+    try:
+        # Delete rows instead of dropping the table
+        HistoricalData.query.filter_by(user_id=current_user.id).delete()
+        db.session.commit()
+        flash("All historical data has been deleted successfully.")
+    except Exception as e:
+        db.session.rollback()
+        flash(f"An error occurred: {str(e)}")
     return redirect(url_for('test'))
+
 
 @app.route('/submit', methods=['POST'])
 @login_required
@@ -223,6 +230,8 @@ def display_data():
 
     # Render data on an HTML template
     return render_template('historical_data.html', tables=df_html, chart_url=chart_path)
+
+
 
 if __name__ == '__main__':
     app.run(debug=False)
