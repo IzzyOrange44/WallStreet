@@ -1,14 +1,18 @@
-from flask import Flask, jsonify, request, render_template, redirect
+from flask import Flask, Response, jsonify, request, render_template, redirect, url_for, flash
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import Integer, String
+from sqlalchemy import Integer, String, text
 import requests
 import logging
 import pandas as pd
+from werkzeug.security import generate_password_hash, check_password_hash
 from display_bollinger import create_graph
+from flask_login import UserMixin, login_user, LoginManager, login_required, current_user, logout_user
 import os
 
 app = Flask(__name__)
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY')
+
 
 class Base(DeclarativeBase):
     pass
@@ -16,12 +20,25 @@ app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DB_URI','sqlite:///users
 db = SQLAlchemy(model_class=Base)
 db.init_app(app)
 
-class User(db.Model):
+login_manager = LoginManager()
+login_manager.init_app(app)
+
+@login_manager.user_loader
+def load_user(user_id):
+    return db.get_or_404(User, user_id)
+
+class User(UserMixin,db.Model):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(500), nullable=False)
+    email: Mapped[str] = mapped_column(String(500), unique=True)
+    name: Mapped[str] = mapped_column(String(500))
+    password: Mapped[str] = mapped_column(String(500))
+
+with app.app_context():
+    db.create_all()
 
 class HistoricalData(db.Model):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, db.ForeignKey('user.id'), nullable=False)
     ticker: Mapped[str] = mapped_column(String(500), nullable=False)
     date: Mapped[str] = mapped_column(String(10), nullable=False)  # Store date as string
     open_price: Mapped[float] = mapped_column(nullable=False)
@@ -33,15 +50,27 @@ class HistoricalData(db.Model):
 
 ALPHA_VANTAGE_API_KEY = os.environ.get('ALPHA_KEY')
 
-@app.route("/clear", methods=["POST"])
-def clear():
-    with app.app_context():
-        db.drop_all()
-    return redirect('/')
+# Monkey patch the set_cookie method to ignore 'partitioned'
+original_set_cookie = Response.set_cookie
+
+def patched_set_cookie(self, *args, **kwargs):
+    kwargs.pop('partitioned', None)  # Remove 'partitioned' if it exists
+    return original_set_cookie(self, *args, **kwargs)
+
+Response.set_cookie = patched_set_cookie
+
+# Save the original delete_cookie method
+original_delete_cookie = Response.delete_cookie
+
+def patched_delete_cookie(self, *args, **kwargs):
+    kwargs.pop('partitioned', None)  # Remove 'partitioned' if it exists
+    return original_delete_cookie(self, *args, **kwargs)
+
+# Replace the original method with the patched one
+Response.delete_cookie = patched_delete_cookie
+
 
 def fetch_historical_data(ticker):
-    with app.app_context():
-        db.create_all()
 
     url = f"https://www.alphavantage.co/query"
     params = {
@@ -63,6 +92,7 @@ def fetch_historical_data(ticker):
 def store_historical_data(ticker, historical_data):
     for date, stats in historical_data.items():
         new_record = HistoricalData(
+            user_id=current_user.id,
             ticker=ticker,
             date=date,
             open_price=float(stats["1. open"]),
@@ -74,36 +104,104 @@ def store_historical_data(ticker, historical_data):
         db.session.add(new_record)
     db.session.commit()
 
-def return_historical_data():
-    db.session.execute(db.select)
-
 @app.route('/')
 def home():
+    return render_template('homepage.html', logged_in= current_user.is_authenticated)
+
+@app.route('/register', methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        email = request.form.get('email')
+        result = db.session.execute(db.select(User).where(User.email == email))
+        # Note, email in db is unique so will only have one result.
+        user = result.scalar()
+        if user:
+            # User already exists
+            flash("You've already signed up with that email, log in instead!")
+            return redirect(url_for('login'))
+
+        hash_and_salted_password = generate_password_hash(
+            request.form.get("password"),
+            method="pbkdf2:sha256",
+            salt_length=8,)
+
+        new_user = User(
+            email=request.form.get('email'),
+            name=request.form.get('name'),
+            password=hash_and_salted_password,
+        )
+
+        db.session.add(new_user)
+        db.session.commit()
+
+        login_user(new_user)
+
+        return redirect(url_for('test'))
+
+    return render_template("register.html", logged_in= current_user.is_authenticated)
+
+@app.route('/login', methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        email = request.form.get('email')
+        password = request.form.get('password')
+
+        # Find user by email entered.
+        result = db.session.execute(db.select(User).where(User.email == email))
+        user = result.scalar()
+
+        # Check stored password hash against entered password hashed.
+        if not user:
+            flash("That email does not exist, please try again.")
+            return redirect(url_for('login'))
+        elif not check_password_hash(user.password, password):
+            flash('Password incorrect, please try again.')
+            return redirect(url_for('login'))
+        else:
+            login_user(user)
+            return redirect(url_for('test'))
+
+    return render_template("login.html", logged_in= current_user.is_authenticated)
+
+@app.route('/test')
+@login_required
+def test():
     with app.app_context():
         db.create_all()
-    return render_template('test.html')
+    print(current_user.name)
+    return render_template('test.html', name=current_user.name, logged_in=True)
+
+@app.route('/logout')
+def logout():
+    logout_user()
+    return redirect(url_for('home'))
+
+@app.route("/clear", methods=["POST"])
+@login_required
+def clear():
+    with db.engine.connect() as connection:
+        connection.execute(text("DROP TABLE IF EXISTS historical_data"))
+    return redirect(url_for('test'))
 
 @app.route('/submit', methods=['POST'])
+@login_required
 def get_user_input():
     ticker = request.form.get("ticker")
     if ticker:
-        new_request = User(name=ticker)
-        db.session.add(new_request)
-        db.session.commit()
-
         try:
             historical_data = fetch_historical_data(ticker)
             store_historical_data(ticker, historical_data)
-            return render_template("test.html", message="Ticker and historical data stored successfully!")
+            return redirect(url_for('test'))
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
     return jsonify("Error: Invalid input"), 400
 
 
 @app.route('/display-data', methods=['POST'])
+@login_required
 def display_data():
     # Fetch all records from HistoricalData
-    results = HistoricalData.query.all()
+    results = HistoricalData.query.filter_by(user_id=current_user.id).all()
 
     # Convert the results to a list of dictionaries for DataFrame
     data = [{
