@@ -6,6 +6,7 @@ import requests
 import logging
 import pandas as pd
 from display_bollinger import create_graph
+import os
 
 app = Flask(__name__)
 
@@ -30,7 +31,7 @@ class HistoricalData(db.Model):
     volume: Mapped[int] = mapped_column(nullable=False)
 
 
-ALPHA_VANTAGE_API_KEY = "7S1WKHB241M3HNC1"
+ALPHA_VANTAGE_API_KEY = os.environ.get('ALPHA_KEY')
 
 @app.route("/clear", methods=["POST"])
 def clear():
