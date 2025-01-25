@@ -8,3 +8,4 @@ SQLAlchemy~=2.0.25
 matplotlib~=3.9.2
 mplfinance~=0.12.10b0
 deepforest~=1.5.0
+gunicorn==21.2.0
