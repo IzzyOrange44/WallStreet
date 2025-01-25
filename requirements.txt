@@ -7,4 +7,5 @@ SQLAlchemy~=2.0.25
 matplotlib~=3.9.2
 mplfinance~=0.12.10b0
 flask-sqlalchemy
+psycopg2
 gunicorn==21.2.0
